@@ -66,7 +66,31 @@ The application will:
 
 ## Visualizing the Data
 
-Once you've collected data, you can:
+### FastAPI Web Interface
+
+The project includes a FastAPI-based web interface that provides a map visualization of your mower's GPS locations:
+
+1. Start the frontend service:
+```bash
+# If using Docker Compose
+docker-compose up automower-frontend
+
+# Or run directly
+poetry run python automower_tracker/frontend.py
+```
+
+2. Access the web interface at http://localhost:8000
+
+Features of the web interface:
+- Interactive map showing mower paths and positions
+- Color-coded markers (green for normal operation, red for errors)
+- Hover over points to see detailed mower status
+- Filter by time range (last hour to last week)
+- Select specific mowers if you have multiple
+
+### Other Visualization Options
+
+You can also:
 
 1. Use Grafana or the InfluxDB UI to create dashboards
 2. Generate heatmaps to see where errors occur most frequently

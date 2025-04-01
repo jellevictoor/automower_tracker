@@ -9,7 +9,7 @@ import time
 import json
 import logging
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, Optional
 
 import requests
@@ -166,6 +166,7 @@ class AutomowerTracker:
 
     def store_mower_data(self, mower_data: Dict[str, Any]) -> None:
         """Store mower data in InfluxDB."""
+
         try:
             mower_id = mower_data.get("id")
             attributes = mower_data.get("attributes", {})
@@ -217,30 +218,47 @@ class AutomowerTracker:
             # Write status point to InfluxDB
             self.write_api.write(bucket=INFLUXDB_BUCKET, record=status_point)
 
-            # Create position point if available
+            # Create position points if available
             if positions and len(positions) > 0:
-                position = positions[0]  # Get most recent position
-                if "latitude" in position and "longitude" in position:
-                    lat = float(position["latitude"])
-                    lon = float(position["longitude"])
+                logger.info(f"Processing {len(positions)} position points")
 
-                    position_point = Point("mower_position") \
-                        .tag("mower_id", mower_id) \
-                        .tag("name", name) \
-                        .field("latitude", lat) \
-                        .field("longitude", lon) \
-                        .time(timestamp)
+                # Calculate time interval between points
+                # Messages come every 5 minutes (300 seconds)
+                # the positions are spread per 30 seconds
+                time_interval = 30
 
-                    # Add error information to position if there's an error
-                    if error_code > 0:
-                        position_point.tag("error", error_description)
-                        position_point.field("error_code", error_code)
+                since_last_message = 300
+                for i, position in enumerate(positions[:int(since_last_message / time_interval)]):
+                    if "latitude" in position and "longitude" in position:
+                        lat = float(position["latitude"])
+                        lon = float(position["longitude"])
 
-                    # Write position point to InfluxDB
-                    self.write_api.write(bucket=INFLUXDB_BUCKET, record=position_point)
-                    logger.info(f"Position: {lat}, {lon}")
-                else:
-                    logger.warning("Position data incomplete")
+                        # Calculate timestamp for this position
+                        # The most recent position (index 0) gets the current timestamp
+                        # Earlier positions get proportionally earlier timestamps
+                        position_timestamp = timestamp.replace(microsecond=0)
+                        seconds_to_subtract = int(i * time_interval)
+                        position_timestamp = position_timestamp - timedelta(seconds=seconds_to_subtract)
+
+                        position_point = Point("mower_position") \
+                            .tag("mower_id", mower_id) \
+                            .tag("name", name) \
+                            .field("latitude", lat) \
+                            .field("longitude", lon) \
+                            .time(position_timestamp)
+
+                        # Add error information to position if there's an error
+                        if error_code > 0:
+                            position_point.tag("error", error_description)
+                            position_point.field("error_code", error_code)
+
+                        # Write position point to InfluxDB
+                        self.write_api.write(bucket=INFLUXDB_BUCKET, record=position_point)
+
+                        if i == 0:  # Only log the most recent position to avoid excessive logging
+                            logger.info(f"Most recent position: {lat}, {lon}")
+                    else:
+                        logger.warning(f"Position data incomplete for position {i}")
             else:
                 logger.warning("No position data available")
 

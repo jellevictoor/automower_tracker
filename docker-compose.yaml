@@ -7,3 +7,19 @@ services:
     restart: always
     dns:
       192.168.1.200
+
+  automower-frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: automower-frontend
+    restart: always
+    ports:
+      - "8000:8000"
+    dns:
+      192.168.1.200
+    environment:
+      - INFLUXDB_URL=${INFLUXDB_URL}
+      - INFLUXDB_TOKEN=${INFLUXDB_TOKEN}
+      - INFLUXDB_ORG=${INFLUXDB_ORG}
+      - INFLUXDB_BUCKET=${INFLUXDB_BUCKET}
