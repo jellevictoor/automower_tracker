@@ -50,39 +50,42 @@ async def index(request: Request):
 @app.get("/api/mowers")
 async def get_mowers():
     """Get a list of all mowers."""
-    query = f'''
-    from(bucket: "{INFLUXDB_BUCKET}")
-        |> range(start: -1d)
-        |> filter(fn: (r) => r._measurement == "mower_status")
-        |> group(columns: ["mower_id", "name"])
-        |> distinct(column: "mower_id")
-        |> yield(name: "distinct")
+    query = '''
+from(bucket: "automower")
+  |> range(start: -1d)
+  |> filter(fn: (r) => r._measurement == "mower_status")
+  |> keep(columns: ["mower_id", "name"])
+  |> distinct(column: "mower_id")
+  |> yield(name: "distinct")
     '''
-    
+
     try:
         result = query_api.query(query)
         mowers = []
-        
+        seen_ids = set()
+
         for table in result:
             for record in table.records:
-                mowers.append({
-                    "mower_id": record.values.get("mower_id"),
-                    "name": record.values.get("name")
-                })
-        
+                mower_id = record.values.get("mower_id")
+                if mower_id not in seen_ids:
+                    mowers.append({
+                        "mower_id": mower_id,
+                        "name": record.values.get("name")
+                    })
+                    seen_ids.add(mower_id)
+
         return mowers
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error querying InfluxDB: {str(e)}")
-
 @app.get("/api/positions")
 async def get_positions(hours: int = 24, mower_id: Optional[str] = None):
     """Get mower positions for the specified time range."""
     time_range = f"-{hours}h"
-    
+
     mower_filter = ""
     if mower_id:
         mower_filter = f'|> filter(fn: (r) => r.mower_id == "{mower_id}")'
-    
+
     query = f'''
     from(bucket: "{INFLUXDB_BUCKET}")
         |> range(start: {time_range})
@@ -90,11 +93,11 @@ async def get_positions(hours: int = 24, mower_id: Optional[str] = None):
         {mower_filter}
         |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
     '''
-    
+
     try:
         result = query_api.query(query)
         positions = []
-        
+
         for table in result:
             for record in table.records:
                 position = {
@@ -106,7 +109,7 @@ async def get_positions(hours: int = 24, mower_id: Optional[str] = None):
                     "error_code": record.values.get("error_code", 0)
                 }
                 positions.append(position)
-        
+
         return positions
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error querying InfluxDB: {str(e)}")
@@ -123,13 +126,13 @@ async def get_mower_status(mower_id: str):
         |> sort(columns: ["_time"], desc: true)
         |> limit(n: 1)
     '''
-    
+
     try:
         result = query_api.query(query)
-        
+
         if not result or len(result) == 0:
             raise HTTPException(status_code=404, detail=f"No status found for mower {mower_id}")
-        
+
         for table in result:
             for record in table.records:
                 status = {
@@ -145,7 +148,7 @@ async def get_mower_status(mower_id: str):
                     "error": record.values.get("error", "")
                 }
                 return status
-        
+
         raise HTTPException(status_code=404, detail=f"No status found for mower {mower_id}")
     except Exception as e:
         if isinstance(e, HTTPException):

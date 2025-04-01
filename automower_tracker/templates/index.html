@@ -4,24 +4,22 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Automower Tracker</title>
-    
+
     <!-- Leaflet CSS -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
-          crossorigin=""/>
-    
+    <link rel="stylesheet" href="../static/leaflet/leaflet.css"/>
+
     <style>
         body {
             margin: 0;
             padding: 0;
             font-family: Arial, sans-serif;
         }
-        
+
         #map {
             height: 100vh;
             width: 100%;
         }
-        
+
         .controls {
             position: absolute;
             top: 10px;
@@ -32,7 +30,7 @@
             border-radius: 5px;
             box-shadow: 0 0 10px rgba(0,0,0,0.2);
         }
-        
+
         .info-box {
             padding: 10px;
             background: white;
@@ -40,22 +38,22 @@
             box-shadow: 0 0 10px rgba(0,0,0,0.2);
             max-width: 300px;
         }
-        
+
         .info-box h4 {
             margin: 0 0 5px 0;
             color: #333;
         }
-        
+
         .info-box p {
             margin: 5px 0;
         }
-        
+
         .battery-indicator {
             height: 10px;
             background-color: #4CAF50;
             border-radius: 5px;
         }
-        
+
         .error {
             color: #f44336;
             font-weight: bold;
@@ -64,7 +62,7 @@
 </head>
 <body>
     <div id="map"></div>
-    
+
     <div class="controls">
         <label for="time-range">Time Range:</label>
         <select id="time-range" onchange="updateMap()">
@@ -75,7 +73,7 @@
             <option value="48">Last 2 days</option>
             <option value="168">Last week</option>
         </select>
-        
+
         <div id="mower-selector">
             <label for="mower-select">Mower:</label>
             <select id="mower-select" onchange="updateMap()">
@@ -83,25 +81,23 @@
             </select>
         </div>
     </div>
-    
+
     <!-- Leaflet JS -->
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-            integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
-            crossorigin=""></script>
-    
+    <script src="../static/leaflet/leaflet.js"></script>
+
     <script>
         // Initialize the map
         const map = L.map('map').setView([0, 0], 2);
-        
+
         // Add OpenStreetMap tile layer
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         }).addTo(map);
-        
+
         // Store markers and paths
         let markers = [];
         let paths = {};
-        
+
         // Error code descriptions
         const errorCodes = {
             0: "No error",
@@ -123,26 +119,26 @@
             16: "Stuck in charging station",
             17: "Charging station blocked"
         };
-        
+
         // Initialize by loading mowers and map data
         async function initialize() {
             await loadMowers();
             await updateMap();
         }
-        
+
         // Load mower list
         async function loadMowers() {
             try {
                 const response = await fetch('/api/mowers');
                 const mowers = await response.json();
-                
+
                 const mowerSelect = document.getElementById('mower-select');
-                
+
                 // Clear existing options except "All Mowers"
                 while (mowerSelect.options.length > 1) {
                     mowerSelect.remove(1);
                 }
-                
+
                 // Add mowers to dropdown
                 mowers.forEach(mower => {
                     const option = document.createElement('option');
@@ -154,36 +150,36 @@
                 console.error('Error loading mowers:', error);
             }
         }
-        
+
         // Update map with positions
         async function updateMap() {
             // Clear existing markers
             markers.forEach(marker => map.removeLayer(marker));
             markers = [];
-            
+
             // Clear existing paths
             Object.values(paths).forEach(path => map.removeLayer(path));
             paths = {};
-            
+
             // Get selected time range and mower
             const hours = document.getElementById('time-range').value;
             const mowerId = document.getElementById('mower-select').value;
-            
+
             // Build URL
             let url = `/api/positions?hours=${hours}`;
             if (mowerId) {
                 url += `&mower_id=${mowerId}`;
             }
-            
+
             try {
                 const response = await fetch(url);
                 const positions = await response.json();
-                
+
                 if (positions.length === 0) {
                     alert('No positions found for the selected time range and mower.');
                     return;
                 }
-                
+
                 // Group positions by mower
                 const mowerPositions = {};
                 positions.forEach(pos => {
@@ -192,12 +188,12 @@
                     }
                     mowerPositions[pos.mower_id].push(pos);
                 });
-                
+
                 // Process each mower's positions
                 for (const [mowerId, positions] of Object.entries(mowerPositions)) {
                     // Sort positions by time
                     positions.sort((a, b) => new Date(a.time) - new Date(b.time));
-                    
+
                     // Create path
                     const pathPoints = positions.map(pos => [pos.latitude, pos.longitude]);
                     const path = L.polyline(pathPoints, {
@@ -206,7 +202,7 @@
                         opacity: 0.7
                     }).addTo(map);
                     paths[mowerId] = path;
-                    
+
                     // Add markers for each position
                     positions.forEach(pos => {
                         const marker = L.circleMarker([pos.latitude, pos.longitude], {
@@ -217,20 +213,20 @@
                             opacity: 1,
                             fillOpacity: 0.8
                         });
-                        
+
                         // Store mower ID and time for status lookup
                         marker.mowerId = pos.mower_id;
                         marker.timestamp = pos.time;
-                        
+
                         // Add hover event
                         marker.on('mouseover', showMowerStatus);
                         marker.on('mouseout', hideTooltip);
-                        
+
                         marker.addTo(map);
                         markers.push(marker);
                     });
                 }
-                
+
                 // Fit map to show all markers
                 if (markers.length > 0) {
                     const group = L.featureGroup(markers);
@@ -240,18 +236,18 @@
                 console.error('Error loading positions:', error);
             }
         }
-        
+
         // Show mower status on hover
         async function showMowerStatus(e) {
             const marker = e.target;
-            
+
             try {
                 const response = await fetch(`/api/status/${marker.mowerId}`);
                 const status = await response.json();
-                
+
                 // Format time
                 const time = new Date(marker.timestamp).toLocaleString();
-                
+
                 // Create tooltip content
                 let content = `
                     <div class="info-box">
@@ -264,27 +260,27 @@
                         <p><strong>Activity:</strong> ${status.activity}</p>
                         <p><strong>State:</strong> ${status.state}</p>
                 `;
-                
+
                 // Add error information if there's an error
                 if (status.error_code > 0) {
                     const errorDesc = errorCodes[status.error_code] || `Unknown error (${status.error_code})`;
                     content += `<p class="error"><strong>Error:</strong> ${errorDesc}</p>`;
                 }
-                
+
                 content += `</div>`;
-                
+
                 // Show tooltip
                 const tooltip = L.popup()
                     .setLatLng(marker.getLatLng())
                     .setContent(content)
                     .openOn(map);
-                
+
                 marker.tooltip = tooltip;
             } catch (error) {
                 console.error('Error loading mower status:', error);
             }
         }
-        
+
         // Hide tooltip on mouseout
         function hideTooltip(e) {
             const marker = e.target;
@@ -293,7 +289,7 @@
                 marker.tooltip = null;
             }
         }
-        
+
         // Generate random color for paths
         function getRandomColor() {
             const letters = '0123456789ABCDEF';
@@ -303,7 +299,7 @@
             }
             return color;
         }
-        
+
         // Initialize the map when the page loads
         window.onload = initialize;
     </script>

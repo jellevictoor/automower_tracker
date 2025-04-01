@@ -12,6 +12,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.frontend
+      no_cache: true
     container_name: automower-frontend
     restart: always
     ports:
