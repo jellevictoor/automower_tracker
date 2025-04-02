@@ -58,6 +58,12 @@
             color: #f44336;
             font-weight: bold;
         }
+
+        .view-options {
+            margin-top: 10px;
+            padding-top: 5px;
+            border-top: 1px solid #eee;
+        }
     </style>
 </head>
 <body>
@@ -81,9 +87,26 @@
             </select>
         </div>
 
-        <div>
-            <label for="show-markers">Show GPS Points:</label>
-            <input type="checkbox" id="show-markers" checked onchange="toggleMarkers()" />
+        <div class="view-options">
+            <div>
+                <label for="show-markers">Show GPS Points:</label>
+                <input type="checkbox" id="show-markers" checked onchange="toggleMarkers()" />
+            </div>
+
+            <div>
+                <label for="show-paths">Show Paths:</label>
+                <input type="checkbox" id="show-paths" checked onchange="togglePaths()" />
+            </div>
+
+            <div>
+                <label for="show-heatmap">Show Heatmap:</label>
+                <input type="checkbox" id="show-heatmap" onchange="toggleHeatmap()" />
+            </div>
+
+            <div>
+                <label for="heatmap-intensity">Heatmap Intensity:</label>
+                <input type="range" id="heatmap-intensity" min="1" max="30" value="15" onchange="updateHeatmapIntensity(this.value)" />
+            </div>
         </div>
 
         <div id="last-updated" style="margin-top: 10px; font-size: 0.8em; color: #666;">
@@ -94,6 +117,9 @@
     <!-- Leaflet JS -->
     <script src="../static/leaflet/leaflet.js"></script>
 
+    <!-- Leaflet.heat plugin -->
+    <script src="../static/leaflet/leaflet-heat.js"></script>
+
     <script>
         // Initialize the map
         const map = L.map('map', {
@@ -102,14 +128,17 @@
         }).setView([0, 0], 2);
         L.tileLayer('http://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
             maxZoom: 22,
-                    subdomains:['mt0','mt1','mt2','mt3']
-
+            subdomains:['mt0','mt1','mt2','mt3']
         }).addTo(map);
 
         // Store markers and paths
         let markers = [];
         let paths = {};
         let markersVisible = true; // Track marker visibility state
+        let pathsVisible = true;   // Track path visibility state
+        let heatmapVisible = false; // Track heatmap visibility state
+        let heatmapLayer = null;   // Heatmap layer reference
+        let heatmapIntensity = 15; // Default heat intensity
 
         // Error code descriptions
         const errorCodes = {
@@ -178,6 +207,12 @@
             Object.values(paths).forEach(path => map.removeLayer(path));
             paths = {};
 
+            // Clear existing heatmap
+            if (heatmapLayer) {
+                map.removeLayer(heatmapLayer);
+                heatmapLayer = null;
+            }
+
             // Get selected time range and mower
             const hours = document.getElementById('time-range').value;
             const mowerId = document.getElementById('mower-select').value;
@@ -195,6 +230,32 @@
                 if (positions.length === 0) {
                     alert('No positions found for the selected time range and mower.');
                     return;
+                }
+
+                // Prepare data for heatmap
+                const heatmapData = positions.map(pos => [
+                    pos.latitude,
+                    pos.longitude,
+                    1 // Default intensity
+                ]);
+
+                // Create heatmap layer
+                heatmapLayer = L.heatLayer(heatmapData, {
+                    radius: 25,
+                    blur: 15,
+                    maxZoom: 17,
+                    max: heatmapIntensity,
+                    gradient: {
+                        0.4: 'blue',
+                        0.6: 'lime',
+                        0.8: 'yellow',
+                        1.0: 'red'
+                    }
+                });
+
+                // Only add to map if heatmap is visible
+                if (heatmapVisible) {
+                    heatmapLayer.addTo(map);
                 }
 
                 // Group positions by mower
@@ -217,7 +278,13 @@
                         color: getRandomColor(),
                         weight: 3,
                         opacity: 0.7
-                    }).addTo(map);
+                    });
+
+                    // Only add path to map if paths are visible
+                    if (pathsVisible) {
+                        path.addTo(map);
+                    }
+
                     paths[mowerId] = path;
 
                     // Add markers for each position
@@ -322,7 +389,7 @@
 
         // Toggle marker visibility
         function toggleMarkers() {
-            markersVisible = !markersVisible;
+            markersVisible = document.getElementById('show-markers').checked;
             markers.forEach(marker => {
                 if (markersVisible) {
                     marker.addTo(map);
@@ -330,6 +397,37 @@
                     map.removeLayer(marker);
                 }
             });
+        }
+
+        // Toggle path visibility
+        function togglePaths() {
+            pathsVisible = document.getElementById('show-paths').checked;
+            Object.values(paths).forEach(path => {
+                if (pathsVisible) {
+                    path.addTo(map);
+                } else {
+                    map.removeLayer(path);
+                }
+            });
+        }
+
+        // Toggle heatmap visibility
+        function toggleHeatmap() {
+            heatmapVisible = document.getElementById('show-heatmap').checked;
+            if (heatmapVisible && heatmapLayer) {
+                heatmapLayer.addTo(map);
+            } else if (heatmapLayer) {
+                map.removeLayer(heatmapLayer);
+            }
+        }
+
+        // Update heatmap intensity
+        function updateHeatmapIntensity(value) {
+            heatmapIntensity = parseInt(value);
+            // Need to recreate the heatmap with new intensity
+            if (heatmapVisible && heatmapLayer) {
+                updateMap();
+            }
         }
 
         // Initialize the map when the page loads
