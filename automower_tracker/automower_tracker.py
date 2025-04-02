@@ -45,6 +45,9 @@ INFLUXDB_BUCKET = os.getenv("INFLUXDB_BUCKET", "automower")
 # Polling interval in seconds
 POLL_INTERVAL = 30
 
+# Position interval in seconds (time between consecutive position readings)
+POSITION_INTERVAL = 30
+
 # Error codes to track
 ERROR_CODES = {
     0: "No message",
@@ -176,6 +179,18 @@ class AutomowerTracker:
             battery = attributes.get("battery", {})
             mower = attributes.get("mower", {})
             positions = attributes.get("positions", [])
+            metadata = attributes.get("metadata", {})
+
+            # Get statusTimestamp from metadata
+            status_timestamp_ms = metadata.get("statusTimestamp", 0)
+
+            # Convert milliseconds to datetime object with UTC timezone
+            if status_timestamp_ms > 0:
+                status_timestamp = datetime.fromtimestamp(status_timestamp_ms / 1000, timezone.utc)
+            else:
+                # Fallback to current time if statusTimestamp is not available
+                status_timestamp = datetime.now(timezone.utc)
+                logger.warning(f"statusTimestamp not available, using current time: {status_timestamp}")
 
             # Log basic information
             name = system.get("name", "Unknown")
@@ -188,9 +203,7 @@ class AutomowerTracker:
 
             logger.info(f"Mower: {name}, Battery: {battery_percent}%, "
                         f"Status: {activity}, Error Code: {error_code}")
-
-            # Create points for InfluxDB
-            timestamp = datetime.now(timezone.utc)
+            logger.info(f"Status timestamp: {status_timestamp}")
 
             # Create status point
             status_point = Point("mower_status") \
@@ -202,7 +215,7 @@ class AutomowerTracker:
                 .tag("state", state) \
                 .field("battery_percent", battery_percent) \
                 .field("error_code", error_code) \
-                .time(timestamp)
+                .time(status_timestamp)
 
             # Add error information if there's an error
             if error_code > 0:
@@ -222,23 +235,17 @@ class AutomowerTracker:
             if positions and len(positions) > 0:
                 logger.info(f"Processing {len(positions)} position points")
 
-                # Calculate time interval between points
-                # Messages come every 5 minutes (300 seconds)
-                # the positions are spread per 30 seconds
-                time_interval = 30
-
-                since_last_message = 300
-                for i, position in enumerate(positions[:int(since_last_message / time_interval)]):
+                # The positions array is ordered with most recent position first
+                # Each position is POSITION_INTERVAL seconds apart
+                for i, position in enumerate(positions):
                     if "latitude" in position and "longitude" in position:
                         lat = float(position["latitude"])
                         lon = float(position["longitude"])
 
                         # Calculate timestamp for this position
-                        # The most recent position (index 0) gets the current timestamp
+                        # The most recent position (index 0) gets the status_timestamp
                         # Earlier positions get proportionally earlier timestamps
-                        position_timestamp = timestamp.replace(microsecond=0)
-                        seconds_to_subtract = int(i * time_interval)
-                        position_timestamp = position_timestamp - timedelta(seconds=seconds_to_subtract)
+                        position_timestamp = status_timestamp - timedelta(seconds=i * POSITION_INTERVAL)
 
                         position_point = Point("mower_position") \
                             .tag("mower_id", mower_id) \
@@ -249,6 +256,7 @@ class AutomowerTracker:
 
                         # Add error information to position if there's an error
                         if error_code > 0:
+                            error_description = ERROR_CODES.get(error_code, f"Unknown error {error_code}")
                             position_point.tag("error", error_description)
                             position_point.field("error_code", error_code)
 
@@ -256,7 +264,7 @@ class AutomowerTracker:
                         self.write_api.write(bucket=INFLUXDB_BUCKET, record=position_point)
 
                         if i == 0:  # Only log the most recent position to avoid excessive logging
-                            logger.info(f"Most recent position: {lat}, {lon}")
+                            logger.info(f"Most recent position: {lat}, {lon} at {position_timestamp}")
                     else:
                         logger.warning(f"Position data incomplete for position {i}")
             else:
