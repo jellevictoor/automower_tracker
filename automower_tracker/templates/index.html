@@ -80,6 +80,15 @@
                 <option value="">All Mowers</option>
             </select>
         </div>
+
+        <div>
+            <label for="show-markers">Show GPS Points:</label>
+            <input type="checkbox" id="show-markers" checked onchange="toggleMarkers()" />
+        </div>
+
+        <div id="last-updated" style="margin-top: 10px; font-size: 0.8em; color: #666;">
+            Last updated: Never
+        </div>
     </div>
 
     <!-- Leaflet JS -->
@@ -87,16 +96,20 @@
 
     <script>
         // Initialize the map
-        const map = L.map('map').setView([0, 0], 2);
+        const map = L.map('map', {
+            minZoom: 2,
+            maxZoom: 22  // Increased max zoom level
+        }).setView([0, 0], 2);
+        L.tileLayer('http://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
+            maxZoom: 22,
+                    subdomains:['mt0','mt1','mt2','mt3']
 
-        // Add OpenStreetMap tile layer
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         }).addTo(map);
 
         // Store markers and paths
         let markers = [];
         let paths = {};
+        let markersVisible = true; // Track marker visibility state
 
         // Error code descriptions
         const errorCodes = {
@@ -153,6 +166,10 @@
 
         // Update map with positions
         async function updateMap() {
+            // Update last updated time
+            const now = new Date();
+            document.getElementById('last-updated').textContent = `Last updated: ${now.toLocaleString()}`;
+
             // Clear existing markers
             markers.forEach(marker => map.removeLayer(marker));
             markers = [];
@@ -222,7 +239,10 @@
                         marker.on('mouseover', showMowerStatus);
                         marker.on('mouseout', hideTooltip);
 
-                        marker.addTo(map);
+                        // Only add marker to map if markers are visible
+                        if (markersVisible) {
+                            marker.addTo(map);
+                        }
                         markers.push(marker);
                     });
                 }
@@ -298,6 +318,18 @@
                 color += letters[Math.floor(Math.random() * 16)];
             }
             return color;
+        }
+
+        // Toggle marker visibility
+        function toggleMarkers() {
+            markersVisible = !markersVisible;
+            markers.forEach(marker => {
+                if (markersVisible) {
+                    marker.addTo(map);
+                } else {
+                    map.removeLayer(marker);
+                }
+            });
         }
 
         // Initialize the map when the page loads
