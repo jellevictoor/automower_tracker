@@ -231,44 +231,49 @@ class AutomowerTracker:
             # Write status point to InfluxDB
             self.write_api.write(bucket=INFLUXDB_BUCKET, record=status_point)
 
-            # Create position points if available
-            if positions and len(positions) > 0:
-                logger.info(f"Processing {len(positions)} position points")
+            # Only process position data if the mower is actually mowing
+            if activity == "MOWING":
+                # Create position points if available
+                if positions and len(positions) > 0:
+                    logger.info(f"Processing {len(positions)} position points for MOWING status")
 
-                # The positions array is ordered with most recent position first
-                # Each position is POSITION_INTERVAL seconds apart
-                for i, position in enumerate(positions):
-                    if "latitude" in position and "longitude" in position:
-                        lat = float(position["latitude"])
-                        lon = float(position["longitude"])
+                    # The positions array is ordered with most recent position first
+                    # Each position is POSITION_INTERVAL seconds apart
+                    for i, position in enumerate(positions):
+                        if "latitude" in position and "longitude" in position:
+                            lat = float(position["latitude"])
+                            lon = float(position["longitude"])
 
-                        # Calculate timestamp for this position
-                        # The most recent position (index 0) gets the status_timestamp
-                        # Earlier positions get proportionally earlier timestamps
-                        position_timestamp = status_timestamp - timedelta(seconds=i * POSITION_INTERVAL)
+                            # Calculate timestamp for this position
+                            # The most recent position (index 0) gets the status_timestamp
+                            # Earlier positions get proportionally earlier timestamps
+                            position_timestamp = status_timestamp - timedelta(seconds=i * POSITION_INTERVAL)
 
-                        position_point = Point("mower_position") \
-                            .tag("mower_id", mower_id) \
-                            .tag("name", name) \
-                            .field("latitude", lat) \
-                            .field("longitude", lon) \
-                            .time(position_timestamp)
+                            position_point = Point("mower_position") \
+                                .tag("mower_id", mower_id) \
+                                .tag("name", name) \
+                                .tag("activity", activity) \
+                                .field("latitude", lat) \
+                                .field("longitude", lon) \
+                                .time(position_timestamp)
 
-                        # Add error information to position if there's an error
-                        if error_code > 0:
-                            error_description = ERROR_CODES.get(error_code, f"Unknown error {error_code}")
-                            position_point.tag("error", error_description)
-                            position_point.field("error_code", error_code)
+                            # Add error information to position if there's an error
+                            if error_code > 0:
+                                error_description = ERROR_CODES.get(error_code, f"Unknown error {error_code}")
+                                position_point.tag("error", error_description)
+                                position_point.field("error_code", error_code)
 
-                        # Write position point to InfluxDB
-                        self.write_api.write(bucket=INFLUXDB_BUCKET, record=position_point)
+                            # Write position point to InfluxDB
+                            self.write_api.write(bucket=INFLUXDB_BUCKET, record=position_point)
 
-                        if i == 0:  # Only log the most recent position to avoid excessive logging
-                            logger.info(f"Most recent position: {lat}, {lon} at {position_timestamp}")
-                    else:
-                        logger.warning(f"Position data incomplete for position {i}")
+                            if i == 0:  # Only log the most recent position to avoid excessive logging
+                                logger.info(f"Most recent position: {lat}, {lon} at {position_timestamp}")
+                        else:
+                            logger.warning(f"Position data incomplete for position {i}")
+                else:
+                    logger.warning("No position data available while mower is MOWING")
             else:
-                logger.warning("No position data available")
+                logger.info(f"Skipping position tracking as mower is not MOWING (current activity: {activity})")
 
             logger.info(f"Stored data for mower {mower_id}")
 
