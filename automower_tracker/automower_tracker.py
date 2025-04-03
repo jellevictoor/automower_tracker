@@ -42,8 +42,8 @@ INFLUXDB_TOKEN = os.getenv("INFLUXDB_TOKEN")
 INFLUXDB_ORG = os.getenv("INFLUXDB_ORG")
 INFLUXDB_BUCKET = os.getenv("INFLUXDB_BUCKET", "automower")
 
-# Polling interval in seconds
-POLL_INTERVAL = 30
+# Polling interval in seconds (5 minutes)
+POLL_INTERVAL = 300
 
 # Position interval in seconds (time between consecutive position readings)
 POSITION_INTERVAL = 30
@@ -86,6 +86,7 @@ class AutomowerTracker:
                 url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG
             )
             self.write_api = self.influx_client.write_api(write_options=SYNCHRONOUS)
+            self.query_api = self.influx_client.query_api()
             # Test InfluxDB connection
             health = self.influx_client.health()
             logger.info(f"InfluxDB connection: {health.status}")
@@ -167,6 +168,31 @@ class AutomowerTracker:
                 logger.error(f"Response: {e.response.text}")
             return {}
 
+    def get_last_position_timestamp(self, mower_id: str) -> Optional[datetime]:
+        """Get the timestamp of the last stored position for a specific mower."""
+        try:
+            query = f'''
+            from(bucket: "{INFLUXDB_BUCKET}")
+              |> range(start: -30d)
+              |> filter(fn: (r) => r._measurement == "mower_position")
+              |> filter(fn: (r) => r.mower_id == "{mower_id}")
+              |> last()
+            '''
+
+            result = self.query_api.query(query=query, org=INFLUXDB_ORG)
+
+            if result and len(result) > 0 and len(result[0].records) > 0:
+                # Get the timestamp from the first record
+                last_timestamp = result[0].records[0].get_time()
+                logger.info(f"Last position timestamp for mower {mower_id}: {last_timestamp}")
+                return last_timestamp
+            else:
+                logger.info(f"No previous position data found for mower {mower_id}")
+                return None
+        except Exception as e:
+            logger.error(f"Error fetching last position timestamp: {e}")
+            return None
+
     def store_mower_data(self, mower_data: Dict[str, Any]) -> None:
         """Store mower data in InfluxDB."""
 
@@ -186,6 +212,7 @@ class AutomowerTracker:
 
             # Convert milliseconds to datetime object with UTC timezone
             if status_timestamp_ms > 0:
+                logger.info(f"raw status timestamp {status_timestamp_ms}")
                 status_timestamp = datetime.fromtimestamp(status_timestamp_ms / 1000, timezone.utc)
             else:
                 # Fallback to current time if statusTimestamp is not available
@@ -237,32 +264,60 @@ class AutomowerTracker:
                 if positions and len(positions) > 0:
                     logger.info(f"Processing {len(positions)} position points for MOWING status")
 
-                    lat = float(positions[0]["latitude"])
-                    lon = float(position[0]["longitude"])
+                    # Get the last position timestamp from InfluxDB
+                    last_position_timestamp = self.get_last_position_timestamp(mower_id)
+                    logger.info(f"Last stored position timestamp: {last_position_timestamp}")
 
-                    # Calculate timestamp for this position
-                    # The most recent position (index 0) gets the status_timestamp
-                    # Earlier positions get proportionally earlier timestamps
-                    position_timestamp = status_timestamp - timedelta(seconds=i * POSITION_INTERVAL)
+                    # Track the latest position timestamp we've processed in this batch
+                    latest_processed_timestamp = None
 
-                    position_point = Point("mower_position") \
-                        .tag("mower_id", mower_id) \
-                        .tag("name", name) \
-                        .tag("activity", activity) \
-                        .field("latitude", lat) \
-                        .field("longitude", lon) \
-                        .time(position_timestamp)
+                    # The positions array is ordered with most recent position first
+                    # Each position is POSITION_INTERVAL seconds apart
+                    for i, position in enumerate(positions):
+                        if "latitude" in position and "longitude" in position:
+                            lat = float(position["latitude"])
+                            lon = float(position["longitude"])
 
-                    # Add error information to position if there's an error
-                    if error_code > 0:
-                        error_description = ERROR_CODES.get(error_code, f"Unknown error {error_code}")
-                        position_point.tag("error", error_description)
-                        position_point.field("error_code", error_code)
+                            # Calculate timestamp for this position
+                            # The most recent position (index 0) gets the status_timestamp
+                            # Earlier positions get proportionally earlier timestamps
+                            position_timestamp = status_timestamp - timedelta(seconds=i * POSITION_INTERVAL)
 
-                    # Write position point to InfluxDB
-                    self.write_api.write(bucket=INFLUXDB_BUCKET, record=position_point)
+                            # Skip if this position is older than or equal to the last stored position
+                            if last_position_timestamp and position_timestamp <= last_position_timestamp:
+                                logger.info(f"Skipping position at {position_timestamp} as it's not newer than last stored position")
+                                continue
 
+                            # Skip if this position is within 5 seconds of the latest processed position
+                            if latest_processed_timestamp and abs((latest_processed_timestamp - position_timestamp).total_seconds()) < 5:
+                                logger.info(f"Skipping position at {position_timestamp} as it's within 5 seconds of latest processed position")
+                                continue
 
+                            position_point = Point("mower_position") \
+                                .tag("mower_id", mower_id) \
+                                .tag("name", name) \
+                                .tag("activity", activity) \
+                                .field("latitude", lat) \
+                                .field("longitude", lon) \
+                                .time(position_timestamp)
+
+                            # Add error information to position if there's an error
+                            if error_code > 0:
+                                error_description = ERROR_CODES.get(error_code, f"Unknown error {error_code}")
+                                position_point.tag("error", error_description)
+                                position_point.field("error_code", error_code)
+
+                            # Write position point to InfluxDB
+                            self.write_api.write(bucket=INFLUXDB_BUCKET, record=position_point)
+
+                            # Update the latest processed timestamp
+                            if latest_processed_timestamp is None or position_timestamp > latest_processed_timestamp:
+                                latest_processed_timestamp = position_timestamp
+
+                            if i == 0:  # Only log the most recent position to avoid excessive logging
+                                logger.info(f"Most recent position: {lat}, {lon} at {position_timestamp}")
+                        else:
+                            logger.warning(f"Position data incomplete for position {i}")
                 else:
                     logger.warning("No position data available while mower is MOWING")
             else:
